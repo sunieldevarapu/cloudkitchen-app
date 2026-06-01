@@ -34,6 +34,25 @@ spec:
         fullnameOverride: kube-prometheus
 
         # ---------------------------------------------------------------
+        # GKE has a MANAGED control plane — etcd, kube-scheduler,
+        # kube-controller-manager, kube-proxy, coredns all run inside
+        # Google's infrastructure and are NOT scrape-able from a node.
+        # The kube-prom-stack chart tries to create Services for them
+        # in kube-system by default; on GKE those services would just
+        # point at endpoints that don't exist. Turn them all off.
+        # ---------------------------------------------------------------
+        kubeEtcd:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        coreDns:
+          enabled: false
+
+        # ---------------------------------------------------------------
         # Grafana — served at /grafana via Traefik IngressRoute (external
         # to this chart). The chart's bundled Ingress is DISABLED.
         # ---------------------------------------------------------------
