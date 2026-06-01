@@ -157,23 +157,11 @@ ingress:
   tlsSecretName: cloudkitchen-tls
   clusterIssuer: letsencrypt-prod
 # -----------------------------------------------------------------------------
-# Observability — Traefik IngressRoutes that expose Grafana / Prometheus /
-# Alertmanager UIs under sub-paths of the same LB. The kube-prom-stack chart
-# (deployed separately via argocd/apps/app-monitoring.yaml) creates these
-# Services in the `monitoring` namespace; we just point IngressRoutes at them.
-# Set enabled: false if the kube-prom-stack chart isn't installed yet.
+# Observability IngressRoutes + ServiceMonitor are NOT in this chart.
+# They're applied as plain YAML via kubectl apply — see docs/gcp/06 Steps 5+6.
+# Keeping them out of the chart keeps the cloudkitchen chart focused on the
+# app itself, and matches the doc's copy-paste-friendly format.
 # -----------------------------------------------------------------------------
-observability:
-  enabled: true
-  grafana:
-    servicename: monitoring-grafana
-    port: 80
-  prometheus:
-    servicename: kube-prometheus-prometheus
-    port: 9090
-  alertmanager:
-    servicename: kube-prometheus-alertmanager
-    port: 9093
 # -----------------------------------------------------------------------------
 # Secrets (DEV DEFAULTS ONLY — override per-environment / use a secrets manager)
 # -----------------------------------------------------------------------------

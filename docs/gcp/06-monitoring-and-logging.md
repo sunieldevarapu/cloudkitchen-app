@@ -282,36 +282,16 @@ kubectl -n monitoring get svc
 ## Step 5 — Add Traefik IngressRoutes for `/grafana`, `/prometheus`, `/alertmanager`
 
 We expose all three UIs under the **existing** Traefik LB (no new IPs, no
-new DNS records). The IngressRoute manifests live in the cloudkitchen
-helm chart so they ship through the same ArgoCD pipeline as everything else.
+new DNS records). The cleanest way: three small standalone YAML files
+applied directly with `kubectl apply`. No Helm templates, no chart wiring.
 
-### 5a — Add the values to `helm/cloudkitchen/values.yaml`
+> ⚠️ Replace the two host values (`vijaygiduthuri.in` and `35.224.38.103`)
+> below with **YOUR** domain and **YOUR** Traefik LB IP. Both appear in
+> every match line; just find-and-replace before saving each file.
 
-Append this block (anywhere; the existing `ingress:` block is a natural
-neighbor):
-
-```yaml
-# Observability — Traefik IngressRoutes that expose Grafana/Prometheus/
-# Alertmanager UIs under sub-paths. Service names come from `kubectl -n
-# monitoring get svc` (Step 4 above).
-observability:
-  enabled: true
-  grafana:
-    servicename: monitoring-grafana
-    port: 80
-  prometheus:
-    servicename: kube-prometheus-prometheus
-    port: 9090
-  alertmanager:
-    servicename: kube-prometheus-alertmanager
-    port: 9093
-```
-
-### 5b — Add `helm/cloudkitchen/templates/observability-ingressroute.yaml`
+### 5a — `grafana-ingressroute.yaml`
 
 ```yaml
-{{- if .Values.observability.enabled -}}
----
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -319,14 +299,18 @@ metadata:
   namespace: monitoring
 spec:
   entryPoints:
-    - {{ .Values.ingress.entryPoint }}
+    - web
   routes:
-    - match: (Host(`{{ .Values.ingress.host }}`) || Host(`{{ .Values.ingress.lbIP }}`)) && PathPrefix(`/grafana`)
+    - match: (Host(`vijaygiduthuri.in`) || Host(`35.224.38.103`)) && PathPrefix(`/grafana`)
       kind: Rule
       services:
-        - name: {{ .Values.observability.grafana.servicename }}
-          port: {{ .Values.observability.grafana.port }}
----
+        - name: monitoring-grafana
+          port: 80
+```
+
+### 5b — `prometheus-ingressroute.yaml`
+
+```yaml
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -334,14 +318,18 @@ metadata:
   namespace: monitoring
 spec:
   entryPoints:
-    - {{ .Values.ingress.entryPoint }}
+    - web
   routes:
-    - match: (Host(`{{ .Values.ingress.host }}`) || Host(`{{ .Values.ingress.lbIP }}`)) && PathPrefix(`/prometheus`)
+    - match: (Host(`vijaygiduthuri.in`) || Host(`35.224.38.103`)) && PathPrefix(`/prometheus`)
       kind: Rule
       services:
-        - name: {{ .Values.observability.prometheus.servicename }}
-          port: {{ .Values.observability.prometheus.port }}
----
+        - name: kube-prometheus-prometheus
+          port: 9090
+```
+
+### 5c — `alertmanager-ingressroute.yaml`
+
+```yaml
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -349,20 +337,44 @@ metadata:
   namespace: monitoring
 spec:
   entryPoints:
-    - {{ .Values.ingress.entryPoint }}
+    - web
   routes:
-    - match: (Host(`{{ .Values.ingress.host }}`) || Host(`{{ .Values.ingress.lbIP }}`)) && PathPrefix(`/alertmanager`)
+    - match: (Host(`vijaygiduthuri.in`) || Host(`35.224.38.103`)) && PathPrefix(`/alertmanager`)
       kind: Rule
       services:
-        - name: {{ .Values.observability.alertmanager.servicename }}
-          port: {{ .Values.observability.alertmanager.port }}
-{{- end }}
+        - name: kube-prometheus-alertmanager
+          port: 9093
 ```
 
-> 🔑 Same dual-host matcher pattern (`Host(domain) || Host(LB_IP)`) as the
-> main IngressRoute — so curl-by-IP for debugging keeps working.
+### 5d — Apply all three
 
-### 5c — Verify access
+Save the three YAMLs above to local files and apply them in one shot:
+
+```bash
+kubectl apply -f grafana-ingressroute.yaml
+kubectl apply -f prometheus-ingressroute.yaml
+kubectl apply -f alertmanager-ingressroute.yaml
+
+# Confirm:
+kubectl -n monitoring get ingressroute
+# NAME           AGE
+# alertmanager   5s
+# grafana        7s
+# prometheus     6s
+```
+
+### Why these specific values?
+
+| Field in YAML                  | Where it comes from                                                                                                                |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `namespace: monitoring`        | The kube-prometheus-stack chart deploys Grafana/Prometheus/Alertmanager Services into the `monitoring` namespace (Step 4 confirms). |
+| `entryPoints: [web]`           | Plain HTTP on port 80. Phase 7 swaps this to `websecure` (HTTPS).                                                                  |
+| `Host(`<your-domain>`)`        | Your production hostname. Browsers + curl-by-domain hit this matcher.                                                              |
+| `Host(`<your-LB-IP>`)`         | The Traefik LB IP. Kept as a second host so `curl http://<LB-IP>/grafana/` keeps working for debugging.                            |
+| `services.name`                | The Service name printed by `kubectl -n monitoring get svc`. Don't guess — copy from there.                                       |
+| `services.port`                | Standard Grafana = 80, Prometheus = 9090, Alertmanager = 9093.                                                                     |
+
+### Verify access
 
 ```bash
 curl -sIL -o /dev/null -w "/grafana/      -> HTTP %{http_code}\n" "http://vijaygiduthuri.in/grafana/"
@@ -386,38 +398,73 @@ Open in browser:
 The `kube-prom-stack` Prometheus auto-discovers `ServiceMonitor` CRDs in
 **every namespace** (we set `serviceMonitorSelectorNilUsesHelmValues: false`
 in Step 1). So we just drop one ServiceMonitor in the cloudkitchen ns and
-Prometheus picks it up.
+Prometheus picks it up — no chart wiring needed.
 
-All 8 backend services already share the label `app.kubernetes.io/part-of:
-cloudkitchen` (rendered by the chart's `<svc>-service.yaml` templates) and
-expose `/metrics` on the `http` port. One ServiceMonitor selects all of
-them at once.
+All 8 backend Services already share the label `app.kubernetes.io/part-of:
+cloudkitchen` (set by the cloudkitchen helm chart's `<svc>-service.yaml`
+templates) and expose `/metrics` on the `http` port. **One ServiceMonitor
+selects all of them at once.**
 
-### Add `helm/cloudkitchen/templates/servicemonitor.yaml`
+### Save `cloudkitchen-servicemonitor.yaml`
+
+Copy this YAML to a local file as-is. No edits needed — it picks up every
+cloudkitchen service automatically by label.
 
 ```yaml
-{{- if .Values.observability.enabled -}}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: cloudkitchen-services
-  namespace: {{ .Values.namespace }}
+  namespace: cloudkitchen
   labels:
-    release: kube-prometheus           # match kube-prom-stack's default selector
+    # `release: kube-prometheus` matches kube-prom-stack's default
+    # serviceMonitorSelector if anyone tightens it later. Safe even when
+    # the selector is wide-open (we set it that way in Step 1).
+    release: kube-prometheus
 spec:
+  # Only look at Services in the cloudkitchen namespace.
   namespaceSelector:
     matchNames:
-      - {{ .Values.namespace }}
+      - cloudkitchen
+  # Pick every Service that has this label. The chart sets it on all 8
+  # backend services (auth, user, restaurant, menu, order, payment,
+  # delivery, notification) but NOT on frontend/postgres/redis/nats —
+  # so those don't get scraped (frontend is nginx, the others use their
+  # own exporters if you ever need them).
   selector:
     matchLabels:
       app.kubernetes.io/part-of: cloudkitchen
+  # Tell Prometheus: scrape the port NAMED 'http' on each matched
+  # Service, hit the /metrics path, every 30 seconds.
   endpoints:
-    - port: http                       # the Service port name (NOT the number)
+    - port: http
       path: /metrics
       interval: 30s
       scrapeTimeout: 10s
-{{- end }}
 ```
+
+### Apply it
+
+```bash
+kubectl apply -f cloudkitchen-servicemonitor.yaml
+
+# Confirm:
+kubectl -n cloudkitchen get servicemonitor
+# NAME                    AGE
+# cloudkitchen-services   5s
+```
+
+### Why these specific values?
+
+| Field                                                       | Why                                                                                                                                                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `namespace: cloudkitchen`                                   | ServiceMonitors live where the services they target live.                                                                                                          |
+| `labels.release: kube-prometheus`                           | Hedge against someone later setting `serviceMonitorSelector` on the Prometheus CR. With this label, the default `matchLabels: {release: kube-prometheus}` matches. |
+| `namespaceSelector.matchNames: [cloudkitchen]`              | Limits scraping to the cloudkitchen ns. Without this, Prometheus would consider Services with the same label in any namespace.                                     |
+| `selector.matchLabels: {app.kubernetes.io/part-of: cloudkitchen}` | The label every backend Service in the chart carries. **Verify this on your cluster:** `kubectl -n cloudkitchen get svc auth-service -o yaml | grep -A 3 labels`. |
+| `endpoints.port: http`                                      | The *name* of the Service port, **not** the number. Our chart names port 8080 as `http`. Look at your Services to confirm.                                         |
+| `endpoints.path: /metrics`                                  | Where each Go service serves Prometheus metrics. Our chart's Gin middleware exposes them at this path automatically.                                               |
+| `endpoints.interval: 30s`                                   | Scrape every 30 s. Sensible default; lower = more data + more load on each service.                                                                                |
 
 ### Verify scrape
 
