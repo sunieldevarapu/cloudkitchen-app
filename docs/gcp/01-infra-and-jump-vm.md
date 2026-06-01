@@ -184,13 +184,32 @@ terraform apply tfplan
 ```bash
 terraform output
 
-# Sample:
-# bastion_name = "cloudkitchen-dev-bastion"
-# bastion_zone = "us-central1-a"
-# cluster_endpoint = "<redacted>"
-# cluster_name = "cloudkitchen-dev"
-# artifact_registry_repo = "us-central1-docker.pkg.dev/<project>/cloudkitchen-registry"
+# Sample (the outputs that gcp-terraform/outputs.tf actually exports):
+# artifact_registry_urls = {
+#   "auth-service"         = "us-central1-docker.pkg.dev/<project>/cloudkitchen-registry/auth-service"
+#   "user-service"         = "us-central1-docker.pkg.dev/<project>/cloudkitchen-registry/user-service"
+#   ... (one per service)
+# }
+# bastion_name        = "cloudkitchen-dev-bastion"
+# bastion_ssh_command = "gcloud compute ssh cloudkitchen-dev-bastion --zone us-central1-a --tunnel-through-iap --project <project>"
+# cluster_endpoint    = "<sensitive>"     # control-plane IP (hidden by default)
+# cluster_name        = "cloudkitchen-dev"
+# kubeconfig_command  = "gcloud container clusters get-credentials cloudkitchen-dev --zone us-central1-a --project <project>"
+# project_id          = "<project>"
+# region              = "us-central1"
+# vpc_name            = "cloudkitchen-dev-vpc"
 ```
+
+> 💡 The two `*_command` outputs are **ready-to-run gcloud commands** —
+> Terraform builds them from your variables so you don't have to remember
+> the `--zone`/`--project` flags:
+> ```bash
+> # Connect kubectl to the new cluster:
+> eval "$(terraform output -raw kubeconfig_command)"
+>
+> # SSH the bastion via IAP:
+> eval "$(terraform output -raw bastion_ssh_command)"
+> ```
 
 ---
 
