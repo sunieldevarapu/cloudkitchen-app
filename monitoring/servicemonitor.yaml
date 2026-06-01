@@ -1,0 +1,39 @@
+# servicemonitor.yaml
+# -----------------------------------------------------------------------------
+# ServiceMonitor for all CloudKitchen Go microservices.
+#
+# Each service is fronted by a ClusterIP Service that:
+#   - lives in the `cloudkitchen` namespace
+#   - carries the label app.kubernetes.io/part-of: cloudkitchen
+#   - exposes a named port `http` -> 8080
+#
+# Prometheus (kube-prometheus-stack) discovers this ServiceMonitor because the
+# stack is configured with serviceMonitorSelectorNilUsesHelmValues: false.
+# -----------------------------------------------------------------------------
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cloudkitchen-services
+  namespace: monitoring
+  labels:
+    release: kube-prom-stack
+    app.kubernetes.io/part-of: cloudkitchen
+spec:
+  namespaceSelector:
+    matchNames:
+      - cloudkitchen
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: cloudkitchen
+  endpoints:
+    - port: http            # named port on the Service -> targetPort 8080
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      relabelings:
+        # Promote the service name onto a stable `service` label.
+        - source_labels: [__meta_kubernetes_service_label_app]
+          targetLabel: service
+        - source_labels: [__meta_kubernetes_pod_name]
+          targetLabel: pod

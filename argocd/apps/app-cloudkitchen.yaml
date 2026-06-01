@@ -1,0 +1,43 @@
+# =============================================================================
+# Application: cloudkitchen (the platform's own microservices)
+# -----------------------------------------------------------------------------
+# Deploys the umbrella Helm chart at helm/cloudkitchen using the chart's own
+# values.yaml. CI patches the per-service image strings directly inside
+# helm/cloudkitchen/values.yaml; ArgoCD detects the git change and rolls out
+# the new images.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudkitchen
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: cloudkitchen
+
+  source:
+    # NOTE: Replace with your real Git repository URL.
+    repoURL: https://github.com/cloudkitchen/cloudkitchen # <-- REPLACE
+    targetRevision: main
+    path: helm/cloudkitchen
+    # No valueFiles: ArgoCD renders the chart with its own helm/cloudkitchen/values.yaml.
+    # CI keeps the image strings in that file up to date.
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloudkitchen
+
+  syncPolicy:
+    automated:
+      prune: true # remove resources deleted from git
+      selfHeal: true # auto-correct out-of-band drift
+    syncOptions:
+      - CreateNamespace=true # create the cloudkitchen namespace if absent
+      - ServerSideApply=true # safer apply for large CRD-bearing manifests
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

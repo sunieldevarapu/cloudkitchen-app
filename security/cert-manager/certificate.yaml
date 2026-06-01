@@ -1,0 +1,30 @@
+# certificate.yaml
+# -----------------------------------------------------------------------------
+# TLS certificate for the CloudKitchen public domain. cert-manager will obtain
+# and renew it via the referenced ClusterIssuer and store the result in the
+# `cloudkitchen-tls` Secret, which the Traefik IngressRoute / Ingress references.
+#
+# Switch issuerRef.name to `letsencrypt-prod` once staging issuance succeeds.
+# -----------------------------------------------------------------------------
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cloudkitchen-tls
+  namespace: cloudkitchen
+spec:
+  secretName: cloudkitchen-tls
+  duration: 2160h      # 90 days
+  renewBefore: 360h    # renew 15 days before expiry
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: letsencrypt-staging   # -> letsencrypt-prod for production
+    kind: ClusterIssuer
+    group: cert-manager.io
+  commonName: cloudkitchen.example.com
+  dnsNames:
+    - cloudkitchen.example.com
+    - www.cloudkitchen.example.com
+    - api.cloudkitchen.example.com
