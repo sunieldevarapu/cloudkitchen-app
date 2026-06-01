@@ -148,7 +148,7 @@ jobs:
 
       # ---- 8. Trivy image scan — FAIL the job on HIGH or CRITICAL CVEs -------
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: ${{ env.AR_PREFIX }}/${{ matrix.service }}:${{ steps.vars.outputs.sha }}
