@@ -1,11 +1,13 @@
 # PrometheusRule resources for CloudKitchen.
 #
 # Define recording + alerting rules that Prometheus (kube-prometheus-stack)
-# auto-discovers via the Prometheus Operator. The `release: kube-prom-stack`
-# label is how the operator picks them up — keep it.
+# auto-discovers via the Prometheus Operator. The `release: kube-prometheus`
+# label MUST match the chart's fullnameOverride (set in
+# argocd/apps/app-monitoring.yaml) — otherwise the Operator won't load this
+# rule into the Prometheus CR's ruleSelector.
 #
 # Apply with:
-#   kubectl apply -n monitoring -f monitoring/prometheusrules.yaml
+#   kubectl apply -f monitoring/prometheusrules.yaml
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -13,8 +15,17 @@ metadata:
   name: cloudkitchen-app-rules
   namespace: monitoring
   labels:
-    release: kube-prom-stack
+    # Must match the Prometheus CR's ruleSelector.matchLabels which the
+    # chart sets to {release: <Helm release name>}. Our ArgoCD App is
+    # named `monitoring`, so the chart's release name is `monitoring`.
+    # (Don't confuse with `fullnameOverride: kube-prometheus` — that
+    # changes resource NAMES but not the release-label selector.)
+    release: monitoring
     app.kubernetes.io/part-of: cloudkitchen
+  annotations:
+    # Keep this resource alive even though no ArgoCD Application tracks it
+    # (we apply it manually via kubectl). See docs/gcp/06 Step 9.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   groups:
     # -------------------------------------------------------------------------

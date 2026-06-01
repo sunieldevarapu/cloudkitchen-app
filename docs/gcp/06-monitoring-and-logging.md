@@ -417,10 +417,10 @@ metadata:
   name: cloudkitchen-services
   namespace: cloudkitchen
   labels:
-    # `release: kube-prometheus` matches kube-prom-stack's default
+    # `release: monitoring` matches kube-prom-stack's default
     # serviceMonitorSelector if anyone tightens it later. Safe even when
     # the selector is wide-open (we set it that way in Step 1).
-    release: kube-prometheus
+    release: monitoring
 spec:
   # Only look at Services in the cloudkitchen namespace.
   namespaceSelector:
@@ -459,7 +459,7 @@ kubectl -n cloudkitchen get servicemonitor
 | Field                                                       | Why                                                                                                                                                                |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `namespace: cloudkitchen`                                   | ServiceMonitors live where the services they target live.                                                                                                          |
-| `labels.release: kube-prometheus`                           | Hedge against someone later setting `serviceMonitorSelector` on the Prometheus CR. With this label, the default `matchLabels: {release: kube-prometheus}` matches. |
+| `labels.release: monitoring`                           | Hedge against someone later setting `serviceMonitorSelector` on the Prometheus CR. With this label, the default `matchLabels: {release: monitoring}` matches. |
 | `namespaceSelector.matchNames: [cloudkitchen]`              | Limits scraping to the cloudkitchen ns. Without this, Prometheus would consider Services with the same label in any namespace.                                     |
 | `selector.matchLabels: {app.kubernetes.io/part-of: cloudkitchen}` | The label every backend Service in the chart carries. **Verify this on your cluster:** `kubectl -n cloudkitchen get svc auth-service -o yaml | grep -A 3 labels`. |
 | `endpoints.port: http`                                      | The *name* of the Service port, **not** the number. Our chart names port 8080 as `http`. Look at your Services to confirm.                                         |
@@ -529,10 +529,12 @@ It takes one dashboard template (10 panels × 5 rows: stats, traffic, latency,
 resources, logs) and emits 8 ConfigMaps — one per microservice — into a
 single multi-doc YAML.
 
-Run it:
+Run it (or skip — the repo already ships the generated output at
+`monitoring/dashboards/cloudkitchen-dashboards.yaml`, so you can apply it
+directly with the command in Step 8c):
 
 ```bash
-cd observability/grafana-dashboards
+cd monitoring/dashboards
 python3 generate.py > cloudkitchen-dashboards.yaml
 ```
 
@@ -564,7 +566,8 @@ automatically.
 ### 8c — Apply
 
 ```bash
-kubectl apply -f cloudkitchen-dashboards.yaml
+# From the repo root:
+kubectl apply -f monitoring/dashboards/cloudkitchen-dashboards.yaml
 
 # Sanity:
 kubectl -n monitoring get cm -l grafana_dashboard=1
@@ -611,6 +614,77 @@ to the `SERVICES = [...]` list at the top and re-run.
 
 If you change a dashboard, `kubectl apply` the regenerated YAML — Grafana
 sidecar detects the ConfigMap change and reloads within ~30 s.
+
+---
+
+## Step 9 — (Optional) Alerting rules
+
+Prometheus is collecting metrics; one more step turns "I have metrics" into
+"I get paged when something breaks". The repo ships **[monitoring/prometheusrules.yaml](../../monitoring/prometheusrules.yaml)**
+— a single `PrometheusRule` CRD containing 3 recording rules + 7 alert rules
+covering the most common breakages.
+
+### What fires
+
+| Group                      | Rule / alert                       | Trigger                                                                                  | Severity   |
+| -------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------- | ---------- |
+| `cloudkitchen.http`        | `cloudkitchen:http_requests:rate5m`| Recording rule — `sum by (service) (rate(http_requests_total[5m]))`. Speeds up dashboards. | (recording)|
+| `cloudkitchen.http`        | `cloudkitchen:http_5xx:rate5m`     | Recording rule — same shape, filtered to `status=~"5.."`.                                | (recording)|
+| `cloudkitchen.http`        | `cloudkitchen:http_latency_p95`    | Recording rule — `histogram_quantile(0.95, …)`.                                          | (recording)|
+| `cloudkitchen.http`        | `CloudKitchenHighErrorRate`        | >5% 5xx for 5 min on any service                                                         | warning    |
+| `cloudkitchen.http`        | `CloudKitchenHighLatency`          | p95 latency > 1 s for 10 min                                                             | warning    |
+| `cloudkitchen.kubernetes`  | `CloudKitchenPodNotReady`          | A cloudkitchen pod has been NotReady for 5 min                                           | warning    |
+| `cloudkitchen.kubernetes`  | `CloudKitchenCrashLoopBackOff`     | A container restarted >3 times in 15 min                                                 | critical   |
+| `cloudkitchen.kubernetes`  | `CloudKitchenDeploymentDegraded`   | A Deployment has fewer ready replicas than its spec for 10 min                           | warning    |
+| `cloudkitchen.data`        | `CloudKitchenPostgresDown`         | `postgres-0` NotReady for 2 min                                                          | critical   |
+| `cloudkitchen.data`        | `CloudKitchenNATSDown`             | `nats-0` NotReady for 2 min                                                              | critical   |
+
+Recording rules are evaluated on the same interval as a scrape — once a
+minute by default — and the resulting time series are queryable like any
+metric. Use them in dashboards and other alert rules to keep query cost low.
+
+### Apply
+
+```bash
+kubectl apply -f monitoring/prometheusrules.yaml
+
+# Sanity: Prometheus picks it up automatically since the chart sets
+# ruleSelectorNilUsesHelmValues: false (or via the `release: monitoring` label).
+kubectl -n cloudkitchen get prometheusrule
+# NAME                          AGE
+# cloudkitchen-rules            5s
+```
+
+### Where alerts go
+
+By default they fire into the cluster's **Alertmanager** (the
+`/alertmanager` UI you set up in Step 5c). Wiring Alertmanager to a real
+receiver — Slack, PagerDuty, email — is configured in the
+`alertmanager.config:` block of `argocd/apps/app-monitoring.yaml`. Out of
+scope for this phase; the alerts will sit in the Alertmanager UI until you
+add a receiver.
+
+---
+
+## File index
+
+Every standalone YAML this phase produced is collected under
+**[monitoring/](../../monitoring/)** with a top-level README. Quick reference:
+
+| File                                                             | Step | What                                                                                |
+| ---------------------------------------------------------------- | ---- | ----------------------------------------------------------------------------------- |
+| `argocd/apps/app-monitoring.yaml`                                | 1    | kube-prom-stack Helm values (Grafana sub-path, Loki datasource, GKE scraper toggles) |
+| `argocd/apps/app-logging.yaml`                                   | 2    | loki-stack Helm values (Loki + Promtail; lokiAddress override)                       |
+| `monitoring/ingressroutes/grafana.yaml`                          | 5    | Traefik route `/grafana/`    -> monitoring-grafana:80                               |
+| `monitoring/ingressroutes/prometheus.yaml`                       | 5    | Traefik route `/prometheus/` -> kube-prometheus-prometheus:9090                     |
+| `monitoring/ingressroutes/alertmanager.yaml`                     | 5    | Traefik route `/alertmanager/` -> kube-prometheus-alertmanager:9093                 |
+| `monitoring/servicemonitor.yaml`                                 | 6    | ServiceMonitor selecting all 8 cloudkitchen backends                                 |
+| `monitoring/dashboards/generate.py`                              | 8    | Python generator — emits 8 ConfigMaps (one per service)                              |
+| `monitoring/dashboards/cloudkitchen-dashboards.yaml`             | 8    | Generated output — `kubectl apply -f` this                                          |
+| `monitoring/prometheusrules.yaml`                                | 9    | Recording + alerting rules                                                          |
+
+See [monitoring/README.md](../../monitoring/README.md) for the same table
+plus the apply-all snippet.
 
 ---
 
