@@ -1,10 +1,19 @@
 {{- /*
 hostsMatcher: renders Traefik's host clause from .Values.ingress.hosts.
-For hosts=[a,b,c] it produces:  Host(`a`,`b`,`c`)
-Putting it inline keeps each route rule compact + readable.
+
+Traefik v3's Host() function only accepts ONE hostname argument; the
+comma form Host(`a`,`b`) is rejected with
+  "Host: unexpected number of parameters; got 2, expected one of [1]"
+and the entire IngressRoute gets silently disabled.
+
+The correct multi-host form is one Host() per name, OR'd together:
+  Host(`a`) || Host(`b`) || Host(`c`)
+
+We render exactly that, and the caller wraps the expression in parens
+so the surrounding `&& PathPrefix(...)` precedence works correctly.
 */ -}}
 {{- define "cloudkitchen.hostsMatcher" -}}
-Host({{- range $i, $h := .Values.ingress.hosts -}}{{- if $i }},{{ end }}`{{ $h }}`{{- end -}})
+{{- range $i, $h := .Values.ingress.hosts -}}{{- if $i }} || {{ end }}Host(`{{ $h }}`){{- end -}}
 {{- end -}}
 {{- if .Values.ingress.enabled }}
 apiVersion: traefik.io/v1alpha1
@@ -19,63 +28,63 @@ spec:
     - {{ .Values.ingress.entryPoint }}
   routes:
     # --- menu sub-paths under /api/restaurants (higher priority) ---
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathRegexp(`^/api/restaurants/[^/]+/(menu|categories|items)`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathRegexp(`^/api/restaurants/[^/]+/(menu|categories|items)`)
       kind: Rule
       priority: 200
       services:
         - name: {{ .Values.menuService.servicename }}
           port: {{ .Values.menuService.port }}
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathPrefix(`/api/menu`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathPrefix(`/api/menu`)
       kind: Rule
       priority: 200
       services:
         - name: {{ .Values.menuService.servicename }}
           port: {{ .Values.menuService.port }}
     # --- one rule per service ---
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathPrefix(`/api/auth`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathPrefix(`/api/auth`)
       kind: Rule
       priority: 100
       services:
         - name: {{ .Values.authService.servicename }}
           port: {{ .Values.authService.port }}
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathPrefix(`/api/users`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathPrefix(`/api/users`)
       kind: Rule
       priority: 100
       services:
         - name: {{ .Values.userService.servicename }}
           port: {{ .Values.userService.port }}
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathPrefix(`/api/restaurants`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathPrefix(`/api/restaurants`)
       kind: Rule
       priority: 100
       services:
         - name: {{ .Values.restaurantService.servicename }}
           port: {{ .Values.restaurantService.port }}
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && (PathPrefix(`/api/cart`) || PathPrefix(`/api/orders`))
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && (PathPrefix(`/api/cart`) || PathPrefix(`/api/orders`))
       kind: Rule
       priority: 100
       services:
         - name: {{ .Values.orderService.servicename }}
           port: {{ .Values.orderService.port }}
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathPrefix(`/api/payments`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathPrefix(`/api/payments`)
       kind: Rule
       priority: 100
       services:
         - name: {{ .Values.paymentService.servicename }}
           port: {{ .Values.paymentService.port }}
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathPrefix(`/api/deliveries`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathPrefix(`/api/deliveries`)
       kind: Rule
       priority: 100
       services:
         - name: {{ .Values.deliveryService.servicename }}
           port: {{ .Values.deliveryService.port }}
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathPrefix(`/api/notifications`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathPrefix(`/api/notifications`)
       kind: Rule
       priority: 100
       services:
         - name: {{ .Values.notificationService.servicename }}
           port: {{ .Values.notificationService.port }}
     # --- frontend catch-all (lowest priority) ---
-    - match: {{ include "cloudkitchen.hostsMatcher" . }} && PathPrefix(`/`)
+    - match: ({{ include "cloudkitchen.hostsMatcher" . }}) && PathPrefix(`/`)
       kind: Rule
       priority: 1
       services:
