@@ -15,6 +15,13 @@ RUN npm run build
 # ---- Stage 2: serve with nginx (non-root friendly) ----
 FROM nginx:alpine AS runtime
 
+# Pull every available Alpine security patch on top of the base. The official
+# nginx:alpine tag occasionally lags behind Alpine's package repos for a day or
+# two after a CVE fix lands (e.g. libxml2 CVE-2026-6732 — fix is in r1, image
+# ships r0). `apk upgrade` reconciles the layer at build time so Trivy sees
+# the patched versions.
+RUN apk update && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+
 # Custom SPA config (try_files fallback to index.html).
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
