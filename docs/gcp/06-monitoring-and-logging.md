@@ -706,5 +706,232 @@ Phase 6, in order:
 
 ---
 
+## Prometheus Queries (reference)
+
+Once everything's running, here's a hand-picked set of PromQL queries that
+exercise the metrics our setup actually exposes — useful for debugging or
+just exploring.
+
+Open the **Prometheus UI** at **http://vijaygiduthuri.in/prometheus/**,
+paste a query into the *Expression* box, and click the **Execute** button
+(the blue `▷` play icon on the right of the box). Results appear in the
+**Table** tab below.
+
+> **Tip:** after pasting, you must **click Execute** — pressing `Enter`
+> alone doesn't run the query in the new Prometheus UI.
+
+> **Note:** when a result row shows `{}` with a number next to it, the
+> `{}` means "no labels" and the number IS the value. Scroll right if
+> the table cuts it off.
+
+CloudKitchen's Go services use the Gin Prometheus middleware, which
+exposes a single shared metric `http_requests_total` with labels
+`service`, `method`, `path`, `status`. So most queries filter by
+`{service="..."}` rather than separate per-service metric names.
+
+### Query 1 — Are all targets UP?
+
+```promql
+up
+```
+
+Every target Prometheus is scraping. Rows with value `1` are UP. Look for
+`namespace="cloudkitchen"` rows in the table.
+
+### Query 2 — All CloudKitchen targets
+
+```promql
+up{namespace="cloudkitchen"}
+```
+
+Filters to just the 8 backend services. All should show value `1`.
+
+### Query 3 — Total HTTP requests per service
+
+```promql
+sum by (service) (http_requests_total{namespace="cloudkitchen"})
+```
+
+Lifetime request count for each service. Numbers grow steadily; health
+probes (`/healthz`, `/readyz`) dominate when the cluster is idle.
+
+### Query 4 — Per-route detail for auth-service
+
+```promql
+http_requests_total{service="auth-service"}
+```
+
+One row per `method`+`path`+`status` combo. Spot which endpoints are
+most active and which return errors.
+
+### Query 5 — Per-route detail for order-service
+
+```promql
+http_requests_total{service="order-service"}
+```
+
+Same shape, different service. Repeat for any of the 8 services.
+
+### Query 6 — Request rate (requests / second) per service
+
+```promql
+sum by (service) (rate(http_requests_total{namespace="cloudkitchen"}[5m]))
+```
+
+Current throughput per service, averaged over the last 5 min. This is the
+same series the per-service Grafana dashboards' "Requests/sec" panel uses.
+
+### Query 7 — 5xx error rate (errors / second) per service
+
+```promql
+sum by (service) (rate(http_requests_total{namespace="cloudkitchen", status=~"5.."}[5m]))
+```
+
+Should be `0` or very low on a healthy cluster. Sudden non-zero values
+mean something started failing.
+
+### Query 8 — Error percentage per service
+
+```promql
+sum by (service) (rate(http_requests_total{namespace="cloudkitchen", status=~"5.."}[5m]))
+  /
+clamp_min(sum by (service) (rate(http_requests_total{namespace="cloudkitchen"}[5m])), 1e-9)
+```
+
+5xx as a fraction of total. Values are 0–1 (multiply by 100 for percent).
+The `clamp_min` avoids divide-by-zero when a service has no traffic.
+
+### Query 9 — p95 latency per service (seconds)
+
+```promql
+histogram_quantile(0.95, sum by (le, service) (rate(http_request_duration_seconds_bucket{namespace="cloudkitchen"}[5m])))
+```
+
+The 95th-percentile response latency. Sub-100 ms is healthy for most
+CRUD endpoints. Spikes indicate slow DB queries or upstream pressure.
+
+### Query 10 — Top 5 busiest endpoints
+
+```promql
+topk(5, sum by (service, path) (rate(http_requests_total{namespace="cloudkitchen"}[5m])))
+```
+
+The 5 most-active routes across the whole platform right now. Health
+probes usually dominate when there's no real traffic.
+
+### Query 11 — Pod restart counts
+
+```promql
+kube_pod_container_status_restarts_total{namespace="cloudkitchen"}
+```
+
+One row per container. `0` is ideal. Non-zero values mean the kubelet had
+to restart that container (OOM, crash, liveness probe failure). Useful
+for spotting flapping pods.
+
+### Query 12 — Deployment available replicas
+
+```promql
+kube_deployment_status_replicas_available{namespace="cloudkitchen"}
+```
+
+Available replicas per Deployment. Should match `spec.replicas`; if
+lower, some pods are NotReady.
+
+### Query 13 — CPU usage per pod (cores)
+
+```promql
+sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="cloudkitchen", container!="POD", container!=""}[5m]))
+```
+
+CPU consumption per pod, in **cores** (1.0 = one full vCPU). Watch for
+pods near their `resources.limits.cpu`.
+
+### Query 14 — Memory usage per pod (MiB)
+
+```promql
+sum by (pod) (container_memory_working_set_bytes{namespace="cloudkitchen", container!="POD", container!=""}) / 1024 / 1024
+```
+
+Working-set memory per pod, in MiB. Compare against the pod's memory
+limit. If it crosses the limit, the kubelet OOM-kills the container.
+
+### Query 15 — Active goroutines per service (Go-runtime health)
+
+```promql
+go_goroutines{namespace="cloudkitchen"}
+```
+
+Number of live goroutines per service. A **steadily growing number** is
+a classic goroutine-leak signature — typically a missing `defer cancel()`
+on a context.
+
+### Query 16 — Go garbage collection time (seconds/sec)
+
+```promql
+rate(go_gc_duration_seconds_sum{namespace="cloudkitchen"}[5m])
+```
+
+Time spent in GC per second. High values (>0.1 s/s sustained) indicate
+memory pressure — bump memory limits or hunt allocations.
+
+### Query 17 — Active firing alerts
+
+```promql
+ALERTS{alertstate="firing"}
+```
+
+Same alerts shown in the Alertmanager UI, but as a Prometheus table.
+Should be empty on a healthy cluster. If you applied `prometheusrules.yaml`
+(Step 9), the 7 alert rules feed this.
+
+### Query 18 — Recording rule we set up in Step 9
+
+```promql
+cloudkitchen:http_requests:rate5m
+```
+
+The pre-computed "requests / sec by service" recording rule. Faster than
+re-computing the `rate()` each time — handy in dashboards or other rules.
+Equivalent to Query 6.
+
+---
+
+## Alertmanager
+
+Open the Alertmanager UI at **http://vijaygiduthuri.in/alertmanager/** to see:
+
+- **Active alerts** (firing)
+- **Silenced alerts**
+- **Alert history**
+
+If you applied `monitoring/prometheusrules.yaml` in Step 9, the 7 alert
+rules are continuously evaluated. On a healthy cluster they all show
+`inactive`.
+
+To make an alert actually fire (for testing), the simplest trick is to
+push a Deployment into CrashLoopBackOff for >15 min using an invalid
+image:
+
+```bash
+# Use an image that doesn't exist — pod will fail to pull + restart in a loop
+kubectl -n cloudkitchen set image deployment/auth-service-deployment \
+  auth-service=nonexistent.example.com/bad-image:404
+
+# Watch the alert state in Prometheus:
+#   ALERTS{alertname="CloudKitchenCrashLoopBackOff"}
+# After ~15 min of restarts it transitions: pending -> firing
+
+# Revert when done:
+kubectl -n cloudkitchen rollout undo deployment/auth-service-deployment
+```
+
+In production, Alertmanager's `config:` block (in
+`argocd/apps/app-monitoring.yaml`) is where you wire firing alerts to a
+real receiver — Slack, PagerDuty, email. Out of scope for this phase;
+firing alerts just sit in the UI until you add a receiver.
+
+---
+
 ➡️ **Next:** Phase 7 — HTTPS via cert-manager + Let's Encrypt (flip the
 chart from HTTP entryPoint `web` to TLS-terminated `websecure`).
