@@ -9,22 +9,20 @@ registry/auth). Only one is active at a time, controlled by its `on:` trigger.
 
 ## Workflows
 
-| File                  | Cloud | Trigger                                                                            | Purpose                                                                                       |
-| --------------------- | ----- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **`ci-gcp.yaml`** ✅   | GCP   | push to `main`, PRs (on **service** dirs)                                          | Matrix build of all 9 services → Trivy image scan → push to **Artifact Registry** → bump tags |
-| **`helm-validate.yaml`** ✅ | —     | push to `main`, PRs (on **`helm/cloudkitchen/**`**)                                | `helm lint` + `helm template` + `kubeconform` — catches chart errors before ArgoCD does. **No image rebuilds.** |
-| `ci.yaml`             | AWS   | **manual only** (`workflow_dispatch`) — disabled until AWS account is set up       | Matrix build → Trivy → push to **ECR** → bump tags                                            |
-| `trivy-fs.yaml`       | —     | pull requests                                                                      | Trivy filesystem + config/IaC scan; uploads SARIF; fails PR on HIGH/CRITICAL                  |
+| File              | Cloud | Trigger                                                                          | Purpose                                                                                       |
+| ----------------- | ----- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **`ci-gcp.yaml`** ✅ | GCP   | push to `main`, PRs (on service dirs **or** `helm/cloudkitchen/**`)              | Matrix build of all 9 services → Trivy image scan → push to **Artifact Registry** → bump tags |
+| `ci.yaml`         | AWS   | **manual only** (`workflow_dispatch`) — disabled until AWS account is set up     | Matrix build → Trivy → push to **ECR** → bump tags                                            |
+| `trivy-fs.yaml`   | —     | pull requests                                                                    | Trivy filesystem + config/IaC scan; uploads SARIF; fails PR on HIGH/CRITICAL                  |
 
-### How the three active workflows divide the work
+### What triggers `ci-gcp.yaml`
 
-| You changed…                                  | `ci-gcp.yaml` runs? | `helm-validate.yaml` runs? | `trivy-fs.yaml` runs?   |
-| --------------------------------------------- | ------------------- | -------------------------- | ----------------------- |
-| Service code (e.g. `auth-service/cmd/main.go`) | ✅                  | ❌                         | ✅ (PR only)            |
-| Helm values / template (e.g. `helm/cloudkitchen/values.yaml`) | ❌                  | ✅                         | ✅ (PR only)            |
-| Both                                          | ✅                  | ✅                         | ✅ (PR only)            |
-| ArgoCD App spec (`argocd/apps/*.yaml`)        | ❌                  | ❌                         | ✅ (PR only)            |
-| Workflow file itself                          | ✅ (if `ci-gcp.yaml`) | ✅ (if `helm-validate.yaml`) | ✅                       |
+| You changed                                       | `ci-gcp.yaml` runs?                                                |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| Service code (e.g. `auth-service/cmd/main.go`)    | ✅                                                                 |
+| Helm chart (e.g. `helm/cloudkitchen/values.yaml`) | ✅ — yes, rebuilds all 9 images even though their contents didn't change. Keeps the workflow simple + predictable. |
+| ArgoCD App spec (`argocd/apps/*.yaml`)            | ❌ — applied directly with `kubectl apply`                          |
+| Workflow file itself                              | ✅                                                                 |
 
 To **switch the active cloud**: re-enable the `push`/`pull_request` triggers in
 the other file's `on:` block, and disable the currently-active one by replacing

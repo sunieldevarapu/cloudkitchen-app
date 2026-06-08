@@ -30,7 +30,9 @@ name: CI (GCP / Artifact Registry)
 on:
   push:
     branches: [main]
-    # Only run when service source or build inputs change.
+    # Run on any service-code OR helm-chart change. Yes, a helm-only edit
+    # rebuilds all 9 images even though their contents didn't change — that's
+    # intentional. Keeps the pipeline a single, predictable thing.
     paths:
       - "auth-service/**"
       - "user-service/**"
@@ -41,6 +43,7 @@ on:
       - "delivery-service/**"
       - "notification-service/**"
       - "frontend/**"
+      - "helm/cloudkitchen/**"
       - ".github/workflows/ci-gcp.yaml"
   pull_request:
     paths:
@@ -53,6 +56,7 @@ on:
       - "delivery-service/**"
       - "notification-service/**"
       - "frontend/**"
+      - "helm/cloudkitchen/**"
       - ".github/workflows/ci-gcp.yaml"
 
 # Cancel superseded runs on the same ref to save CI minutes.
