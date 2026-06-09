@@ -91,9 +91,13 @@ Two equally valid paths. Pick one.
 ### Option A — As an ArgoCD Application (matches Phase 6 pattern)
 
 The repo already ships [argocd/apps/app-cert-manager.yaml](../../argocd/apps/app-cert-manager.yaml).
-**One edit needed first**: it installs cert-manager into the `ingress`
-namespace, but our Traefik lives in `traefik` (not `ingress`) and cert-manager
-typically lives in its own `cert-manager` namespace. Open the file and change:
+**Three edits needed before applying** — each fixes a real ArgoCD AppProject
+guardrail that bit us on the first try:
+
+**Edit 1 (in `argocd/apps/app-cert-manager.yaml`):** the file targets the
+`ingress` namespace by default, but Traefik already owns the `traefik`
+namespace and cert-manager conventionally lives in its own `cert-manager`
+namespace. Change the destination:
 
 ```yaml
   destination:
@@ -101,19 +105,60 @@ typically lives in its own `cert-manager` namespace. Open the file and change:
     namespace: cert-manager          # was: ingress
 ```
 
-Then apply:
+**Edit 2 (same file):** by default the chart creates its leader-election
+`Role` + `RoleBinding` in `kube-system` — but our `cloudkitchen` AppProject's
+`destinations:` list does **not** include `kube-system`, so ArgoCD rejects
+the sync with `namespace kube-system is not permitted in project 'cloudkitchen'`.
+Pin leader-election to the `cert-manager` namespace instead by adding inside
+the `helm.values:` block:
+
+```yaml
+helm:
+  values: |
+    installCRDs: true
+    replicaCount: 2
+    # 👇 ADD THIS — keeps leader-election Roles/RoleBindings out of kube-system
+    global:
+      leaderElection:
+        namespace: cert-manager
+    # rest of values stay as they were
+```
+
+**Edit 3 (in `argocd/project.yaml`):** add `cert-manager` to the AppProject's
+`destinations:` list — otherwise the App will fail with `namespace cert-manager
+is not permitted in project 'cloudkitchen'`:
+
+```yaml
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: cloudkitchen
+    # ... existing entries ...
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+    # 👇 ADD THIS
+    - server: https://kubernetes.default.svc
+      namespace: cert-manager
+```
+
+Apply the updated AppProject first, then the App:
 
 ```bash
+kubectl apply -f argocd/project.yaml
 kubectl apply -f argocd/apps/app-cert-manager.yaml
 ```
 
 ArgoCD auto-syncs, creates the `cert-manager` namespace, and installs the
-chart. Wait until all 3 cert-manager Deployments are Ready:
+chart. Wait until all 3 cert-manager Deployments are Ready (~70 s):
 
 ```bash
-kubectl -n cert-manager rollout status deploy/cert-manager
-kubectl -n cert-manager rollout status deploy/cert-manager-cainjector
-kubectl -n cert-manager rollout status deploy/cert-manager-webhook
+kubectl -n argocd get app cert-manager -w
+# Wait until: Synced  Healthy
+
+kubectl -n cert-manager get pods
+# Expect 4 pods Running 1/1:
+#   cert-manager-*            (×2 replicas)
+#   cert-manager-cainjector-*
+#   cert-manager-webhook-*
 ```
 
 ### Option B — Direct `helm install` (simpler one-off, no ArgoCD)
