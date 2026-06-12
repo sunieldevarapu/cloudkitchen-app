@@ -95,7 +95,36 @@ flowchart TB
 
     user -->|HTTPS| traefik
     cm <-.->|HTTP-01 challenge| le
+
+    %% ───────── Colour palette ─────────
+    classDef external  fill:#fef3c7,stroke:#92400e,color:#1f2937,stroke-width:2px
+    classDef cisrc     fill:#dbeafe,stroke:#1e40af,color:#1f2937,stroke-width:2px
+    classDef gitops    fill:#ede9fe,stroke:#6d28d9,color:#1f2937,stroke-width:2px
+    classDef ingress   fill:#ffedd5,stroke:#c2410c,color:#1f2937,stroke-width:2px
+    classDef app       fill:#d1fae5,stroke:#065f46,color:#1f2937,stroke-width:2px
+    classDef datastore fill:#fce7f3,stroke:#9d174d,color:#1f2937,stroke-width:2px
+    classDef obs       fill:#cffafe,stroke:#0e7490,color:#1f2937,stroke-width:2px
+
+    class dev,user,le external
+    class gh,ci,reg,tf cisrc
+    class argo gitops
+    class traefik,cm ingress
+    class fe,svcs app
+    class pg,redis,mq datastore
+    class prom,loki obs
 ```
+
+**Legend** — each colour groups one architectural concern:
+
+| Colour | Category | Components |
+|---|---|---|
+| 🟡 Amber  | External actors           | Developer, end-user Browser, Let's Encrypt |
+| 🔵 Blue   | Source / CI / Infra       | GitHub Repo, GitHub Actions, Container Registry, Terraform |
+| 🟣 Purple | GitOps controller         | ArgoCD |
+| 🟠 Orange | Ingress + TLS             | Traefik, cert-manager |
+| 🟢 Green  | Application               | React frontend, 8 Go microservices |
+| 🩷 Pink   | Data stores               | PostgreSQL, Redis, NATS JetStream |
+| 🔷 Cyan   | Observability + Logging   | Prometheus + Grafana + Alertmanager, Loki + Promtail |
 
 - **Infrastructure (Terraform).** One `terraform apply` provisions the VPC, Kubernetes cluster (GKE or EKS), container registry (Artifact Registry or ECR), and IAM — see `gcp-terraform/` and `terraform/`.
 - **CI (GitHub Actions).** On every push to `main`: build all 9 Docker images in parallel, Trivy-scan them, push to the registry, and commit the new image tags back to `helm/cloudkitchen/values.yaml`.
