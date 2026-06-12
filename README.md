@@ -28,122 +28,47 @@ production-style monitoring/logging/security.
 
 ## Architecture
 
-End-to-end view: source code in GitHub all the way through to a user's
-browser hitting the running app, including the GitOps sync, TLS chain,
-and observability fan-in.
-
 ```mermaid
 flowchart TB
-    %% ───────────── External actors ─────────────
-    dev([Developer])
-    user([End-user Browser])
-    dns[GoDaddy DNS<br/>vijaygiduthuri.in]
-    le[("Let's Encrypt ACME")]
+    user([Browser / Mobile])
 
-    %% ───────────── Source / CI ─────────────
-    gh[(GitHub Repo<br/>main branch)]
-    actions[GitHub Actions<br/>build · Trivy scan · push]
-    reg[(Container Registry<br/>ECR / GAR)]
-
-    dev -->|git push| gh
-    gh -->|workflow trigger| actions
-    actions -->|push images| reg
-    actions -->|bot commit:<br/>bump image tags| gh
-
-    %% ───────────── Kubernetes cluster ─────────────
-    subgraph cluster["Kubernetes cluster - EKS or GKE"]
-        direction TB
-
-        argo[ArgoCD<br/>App-of-Apps]
-
-        subgraph traefik_ns["traefik namespace"]
-            traefik[Traefik Ingress<br/>:80 and :443]
-        end
-
-        subgraph cm_ns["cert-manager namespace"]
-            cm[cert-manager]
-        end
-
-        subgraph ck_ns["cloudkitchen namespace"]
-            fe[React Frontend<br/>nginx]
-            services["8 Go microservices on :8080<br/>auth, user, restaurant, menu,<br/>order, payment, delivery, notification"]
-            pg[(PostgreSQL)]
-            redis[(Redis)]
-            nats{{"NATS (JetStream)"}}
-        end
-
-        subgraph mon_ns["monitoring namespace"]
-            prom[Prometheus]
-            grafana[Grafana]
-            alert[Alertmanager]
-        end
-
-        subgraph log_ns["logging namespace"]
-            promtail[Promtail DaemonSet]
-            loki[Loki]
-        end
-
-        %% Runtime path-based routing
-        traefik -->|/| fe
-        traefik -->|/api/*| services
-        traefik -->|/argocd| argo
-        traefik -->|/grafana| grafana
-        traefik -->|/prometheus| prom
-        traefik -->|/alertmanager| alert
-
-        %% Data plane
-        fe -->|REST :8080| services
-        services -->|SQL| pg
-        services -->|cache · sessions| redis
-        services <-->|pub / sub events| nats
-
-        %% Cert provisioning
-        cm -->|writes Secret<br/>cloudkitchen-tls| traefik
-
-        %% GitOps sync (ArgoCD reconciles every platform App)
-        argo -.->|syncs| traefik_ns
-        argo -.->|syncs| cm_ns
-        argo -.->|syncs| ck_ns
-        argo -.->|syncs| mon_ns
-        argo -.->|syncs| log_ns
-
-        %% Observability fan-in
-        prom -.->|scrape /metrics| services
-        prom -.->|scrape| traefik
-        promtail -.->|tail pod logs| loki
-        grafana -.->|PromQL| prom
-        grafana -.->|LogQL| loki
-        prom -.->|fires alerts| alert
+    subgraph edge[Edge]
+      traefik[Traefik Ingress + TLS]
     end
 
-    %% ───────────── External wiring ─────────────
-    user -->|HTTPS| dns
-    dns -->|A record| traefik
-    cm <-->|HTTP-01 challenge<br/>renews every 75d| le
+    fe[React Frontend]
 
-    gh -.->|ArgoCD polls / webhook| argo
-    reg -.->|kubelet image pull| ck_ns
+    subgraph svc[cloudkitchen namespace - Go services :8080]
+      auth[auth]
+      usr[user]
+      rest[restaurant]
+      menu[menu]
+      order[order]
+      pay[payment]
+      del[delivery]
+      notif[notification]
+    end
 
-    classDef ext   fill:#fef3c7,stroke:#92400e,color:#1f2937
-    classDef ci    fill:#dbeafe,stroke:#1e40af,color:#1f2937
-    classDef data  fill:#fce7f3,stroke:#9d174d,color:#1f2937
-    classDef obs   fill:#dcfce7,stroke:#14532d,color:#1f2937
+    subgraph data[Backing services]
+      pg[(PostgreSQL)]
+      redis[(Redis)]
+      mq{{"NATS (JetStream)"}}
+    end
 
-    class dev,user,dns,le ext
-    class actions,reg,argo ci
-    class pg,redis,nats data
-    class prom,grafana,alert,promtail,loki obs
+    user --> traefik --> fe
+    traefik --> auth & usr & rest & menu & order & pay & del & notif
+
+    auth & usr & rest & menu & order & pay & del & notif --> pg
+    auth & order --> redis
+    auth & usr & rest & menu & order & pay & del & notif <--> mq
 ```
 
-**How to read this diagram**
+- **Frontend**: React SPA served by nginx; talks to the services through Traefik.
+- **8 Go microservices** listen on `:8080`, each exposing `/metrics`, `/healthz`, `/readyz`, and structured JSON logs to stdout.
+- **Sync** communication is REST over HTTP. **Async** communication is event-driven over **NATS JetStream**.
+- **PostgreSQL** is the system of record; **Redis** handles sessions/caching; **NATS (JetStream)** is the event bus.
 
-- **CI/CD (top).** Developer pushes → GitHub Actions builds + Trivy-scans + pushes images to the container registry → a CI bot commits the new image tags back to `helm/cloudkitchen/values.yaml` → ArgoCD detects the diff (poll + webhook) and reconciles every platform App.
-- **Cluster body (middle).** Traefik is the single ingress on `:80`/`:443`. cert-manager provisions the `cloudkitchen-tls` Secret via Let's Encrypt HTTP-01 (renews every 75 days). Traefik routes by path prefix: `/` → React frontend, `/api/*` → the 8 Go services, and `/argocd`, `/grafana`, `/prometheus`, `/alertmanager` → the respective platform UIs.
-- **Data plane (cloudkitchen ns).** Services do sync REST on `:8080` to each other and PostgreSQL/Redis; async events flow over **NATS JetStream**.
-- **Observability (bottom).** Prometheus scrapes `/metrics` from every pod; Promtail tails container logs into Loki; Grafana queries both. Alertmanager handles fired alerts.
-
-See [`docs/architecture/PHASE-1.md`](docs/architecture/PHASE-1.md) for the full
-design, event catalog, CI/CD, and GitOps flow.
+See [`docs/architecture/PHASE-1.md`](docs/architecture/PHASE-1.md) for the full design — including the CI/CD pipeline diagram, GitOps flow, event catalog, and observability/security baseline.
 
 ## Tech stack
 
