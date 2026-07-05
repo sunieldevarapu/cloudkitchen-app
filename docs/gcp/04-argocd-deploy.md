@@ -144,6 +144,8 @@ spec:
 
 ```bash
 kubectl apply -f /tmp/argocd-ingressroute.yaml
+kubectl get ingressroute -n argocd
+kubectl describe ingressroute argocd -n argocd
 ```
 
 **Why no `StripPrefix` middleware?**
