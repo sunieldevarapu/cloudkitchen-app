@@ -152,7 +152,7 @@ ingress:
   # works for debugging even after DNS is in place. Get it with:
   #   kubectl -n traefik get svc traefik \
   #     -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-  lbIP: 136.112.45.103
+  lbIP: 35.188.77.250
   entryPoint: web
   tlsSecretName: cloudkitchen-tls
   clusterIssuer: letsencrypt-prod
