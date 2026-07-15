@@ -25,7 +25,7 @@ terraform {
   # ---------------------------------------------------------------------------
   # Remote state: GCS backend
   # ---------------------------------------------------------------------------
-  # Bucket: cloudkitchen-tfstate-585510587062
+  # Bucket: cloudkitchen-tfstate-1019
   #   - location: us-central1
   #   - versioning enabled (keeps history of state changes)
   #   - uniform bucket-level access enforced
@@ -34,7 +34,7 @@ terraform {
   # State path inside the bucket: cloudkitchen/default.tfstate
   # ---------------------------------------------------------------------------
   backend "gcs" {
-    bucket = "cloudkitchen-tfstate-585510587062"
+    bucket = "cloudkitchen-tfstate-1019"
     prefix = "cloudkitchen"
   }
 }
