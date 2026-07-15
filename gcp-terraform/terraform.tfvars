@@ -10,13 +10,13 @@
 # =============================================================================
 
 # GCP project this deployment lives in.
-project_id = "project-d31a3358-346c-40e8-bda"
+project_id = "cloudkitchen-502505"
 
 project     = "cloudkitchen"
 environment = "dev"
 
-region = "us-central1"
-zone   = "us-central1-a"
+region = "asia-south1"
+zone   = "asia-south1-a"
 
 # --- networking ---
 subnet_cidr      = "10.10.0.0/20"
